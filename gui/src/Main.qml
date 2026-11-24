@@ -18,6 +18,9 @@ ApplicationWindow {
     Material.roundedScale: theme.radius
 
     property bool helpVisible: false
+    // True while files are held over the window, so the whole window can show
+    // it is a target instead of leaving the user to find the one small card.
+    property bool dragActive: false
 
     // Closing the window must take the receiver with it: on Windows the child
     // process has no controlling terminal, so an orphaned engine would keep
@@ -33,6 +36,52 @@ ApplicationWindow {
         anchors.fill: parent
         LayoutMirroring.enabled: Qt.application.layoutDirection === Qt.RightToLeft
         LayoutMirroring.childrenInherit: true
+
+        // ---- whole-window drop target -------------------------------
+        // A drop target the size of one card means every other pixel of the
+        // window rejects the drag, which the cursor shows as "no". The whole
+        // window accepts: one device that can receive gets the files directly,
+        // several means the cards above are the choice.
+        DropArea {
+            anchors.fill: parent
+            keys: ["text/uri-list"]
+            onEntered: win.dragActive = true
+            onExited: win.dragActive = false
+            onDropped: (drop) => {
+                win.dragActive = false
+                if (!drop.hasUrls)
+                    return
+
+                const paths = []
+                for (let i = 0; i < drop.urls.length; ++i) {
+                    // toLocalFile applies the platform's own rules; on Windows a
+                    // URL is file:///C:/dir/a.txt and hand-parsing yields /C:/...
+                    const local = drop.urls[i].toLocalFile()
+                    if (local.length > 0)
+                        paths.push(local)
+                }
+                if (paths.length === 0)
+                    return
+
+                const ready = []
+                for (let i = 0; i < backend.peers.length; ++i) {
+                    var peer = backend.peers[i]
+                    if (peer.online && peer.canReceive)
+                        ready.push(peer)
+                }
+                if (ready.length === 1) {
+                    var only = ready[0]
+                    backend.sendFiles(paths, only.hostname, only.port || 0,
+                                      only.protocol || "")
+                } else if (ready.length === 0) {
+                    toast.show(qsTr("No device is receiving right now."))
+                } else {
+                    // Dropping onto a card is the unambiguous choice, and that
+                    // card has its own drop target; do not guess here.
+                    toast.show(qsTr("Drop on the device you want to send to."))
+                }
+            }
+        }
 
         ColumnLayout {
             anchors.fill: parent
@@ -176,9 +225,11 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 radius: Math.min(theme.radius, 8)
-                color: theme.surface
-                border.width: 1
-                border.color: Qt.rgba(1, 1, 1, 0.06)
+                color: win.dragActive ? Qt.rgba(0.478, 0.635, 0.968, 0.10)
+                                      : theme.surface
+                border.width: win.dragActive ? 2 : 1
+                border.color: win.dragActive ? theme.accent
+                                             : Qt.rgba(1, 1, 1, 0.06)
                 clip: true
 
                 ListView {
@@ -195,8 +246,10 @@ ApplicationWindow {
                     Label {
                         anchors.centerIn: parent
                         visible: transferList.count === 0
-                        text: qsTr("Nothing yet. Drop files on a device above to send.")
-                        color: theme.muted
+                        text: win.dragActive
+                              ? qsTr("Drop to send")
+                              : qsTr("Nothing yet. Drop files anywhere in this window.")
+                        color: win.dragActive ? theme.accent : theme.muted
                         font.pixelSize: 13
                     }
                 }

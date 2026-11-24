@@ -102,6 +102,30 @@ private slots:
         Backend backend;
         QVERIFY(backend.peerByName("nobody").isEmpty());
     }
+
+    // The drop handler converts dropped URLs to paths for the Rust engine.
+    // Doing that by string surgery is wrong on Windows, where the result would
+    // be /C:/dir/a.txt; QUrl::toLocalFile applies the platform's own rules, so
+    // pin what it actually guarantees on the platform running the test.
+    void droppedUrlsBecomePlatformPaths()
+    {
+        const QUrl spaced("file:///home/me/My%20File.txt");
+        QCOMPARE(spaced.toLocalFile(), QString("/home/me/My File.txt"));
+
+        // A non-file URL must not silently turn into a bogus path.
+        QVERIFY(QUrl("https://example.com/x").toLocalFile().isEmpty());
+
+#ifdef Q_OS_WIN
+        QCOMPARE(QUrl("file:///C:/Users/me/a.txt").toLocalFile(),
+                 QString("C:/Users/me/a.txt"));
+#else
+        // Off Windows the drive letter is just a path component; the important
+        // property is that no scheme text survives, which hand-parsing broke.
+        const QString converted = QUrl("file:///C:/Users/me/a.txt").toLocalFile();
+        QVERIFY(!converted.startsWith("file:"));
+        QVERIFY(converted.endsWith("a.txt"));
+#endif
+    }
 };
 
 QTEST_MAIN(TaildropTests)

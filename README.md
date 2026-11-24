@@ -29,8 +29,14 @@ history database.
 
 The GUI exists (`gui/`, Qt Quick) and is built with `./gui/bin/build`; the
 receiver starts with the window and restarts itself if it dies, so listening is
-not a button. Real mouse drag-and-drop on Wayland is still to be confirmed by
-hand.
+not a button.
+
+The whole window is a drop target, not just the device cards: a window that
+rejects a drag everywhere except one small rectangle teaches the user that
+dropping does not work. With one device receiving, a drop anywhere sends to it;
+with several, drop on the card you mean.
+
+Real mouse drag-and-drop on Wayland is still to be confirmed by hand.
 
 ## Layout
 

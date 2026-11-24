@@ -107,8 +107,11 @@ Item {
         onHoveredChanged: card.hovered = hovered
     }
 
-    // Qt 6 file drops arrive as URLs; the engine takes paths, so convert here
-    // rather than letting each caller remember to.
+    // Qt 6 file drops arrive as URLs; the engine takes local paths.
+    //
+    // On Windows a URL looks like file:///C:/dir/a.txt, and stripping the
+    // scheme by hand leaves /C:/dir/a.txt, which is not a valid path there.
+    // QUrl.toLocalFile knows the platform rules, so use it instead.
     DropArea {
         anchors.fill: parent
         enabled: card.online && card.canReceive
@@ -117,8 +120,9 @@ Item {
                 return
             const paths = []
             for (let i = 0; i < drop.urls.length; ++i) {
-                const local = drop.urls[i].toString().replace(/^file:\/\//, "")
-                paths.push(decodeURIComponent(local))
+                const local = drop.urls[i].toLocalFile()
+                if (local.length > 0)
+                    paths.push(local)
             }
             if (paths.length > 0)
                 card.filesDropped(paths)
