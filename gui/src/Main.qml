@@ -51,19 +51,37 @@ ApplicationWindow {
             onExited: win.dragActive = false
             onDropped: (drop) => {
                 win.dragActive = false
-                if (!drop.hasUrls)
+
+                // Every early exit below used to fail silently, which is
+                // indistinguishable from the drop never arriving.
+                var urls = []
+                if (drop.hasUrls)
+                    urls = drop.urls
+                backend.logLine("drop received: hasUrls=" + drop.hasUrls +
+                                " urls=" + urls.length)
+
+                if (urls.length === 0) {
+                    backend.logLine("drop rejected: no URLs on the drop")
+                    toast.show(qsTr("That drop carried no files."))
                     return
+                }
 
                 const paths = []
-                for (let i = 0; i < drop.urls.length; ++i) {
-                    // toLocalFile applies the platform's own rules; on Windows a
-                    // URL is file:///C:/dir/a.txt and hand-parsing yields /C:/...
-                    const local = drop.urls[i].toLocalFile()
+                for (let i = 0; i < urls.length; ++i) {
+                    // QML's url type has no toLocalFile(); ask C++, which
+                    // applies the platform rules (on Windows file:///C:/x is
+                    // C:/x, not /C:/x, and hand-parsing gets it wrong).
+                    const local = backend.toLocalPath(urls[i])
+                    backend.logLine("drop url " + i + ": " + urls[i].toString() +
+                                    " -> " + local)
                     if (local.length > 0)
                         paths.push(local)
                 }
-                if (paths.length === 0)
+                if (paths.length === 0) {
+                    backend.logLine("drop rejected: no URL resolved to a local path")
+                    toast.show(qsTr("That drop carried no local files."))
                     return
+                }
 
                 const ready = []
                 for (let i = 0; i < backend.peers.length; ++i) {
@@ -71,8 +89,11 @@ ApplicationWindow {
                     if (peer.online && peer.canReceive)
                         ready.push(peer)
                 }
+                backend.logLine("drop ready devices: " + ready.length)
                 if (ready.length === 1) {
                     var only = ready[0]
+                    backend.logLine("drop sending to " + only.hostname +
+                                    " port=" + (only.port || 0))
                     backend.sendFiles(paths, only.hostname, only.port || 0,
                                       only.protocol || "")
                 } else if (ready.length === 0) {
@@ -182,9 +203,14 @@ ApplicationWindow {
                         canReceive: modelData.canReceive
                         path: modelData.path
                         ipv4: modelData.ipv4
-                        onFilesDropped: (urls) => backend.sendFiles(urls, modelData.hostname,
-                                                        modelData.port || 0,
-                                                        modelData.protocol || "")
+                        onFilesDropped: (urls) => {
+                            backend.logLine("card emit " + urls.length + " file(s) for " +
+                                            modelData.hostname)
+                            backend.sendFiles(urls, modelData.hostname,
+                                              modelData.port || 0,
+                                              modelData.protocol || "")
+                        }
+                        onDropRejected: (reason) => toast.show(reason)
                     }
                 }
 

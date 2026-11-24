@@ -5,6 +5,7 @@
 #include <QElapsedTimer>
 #include <QProcess>
 #include <QTimer>
+#include <QUrl>
 #include <QVariantList>
 #include <QVariantMap>
 
@@ -52,6 +53,15 @@ public:
                                int port = 0, const QString &protocol = {});
     Q_INVOKABLE QVariantMap peerByName(const QString &name) const;
 
+    // QML's url type has no toLocalFile(); it is a QUrl method. Hand the URL to
+    // C++ so the platform rules apply instead of string surgery, which on
+    // Windows turns file:///C:/x into /C:/x.
+    Q_INVOKABLE QString toLocalPath(const QUrl &url) const;
+
+    // Append-only diagnostics, because a GUI started from the launcher has no
+    // terminal to print to and "nothing happened" is otherwise unfalsifiable.
+    Q_INVOKABLE void logLine(const QString &line);
+
 signals:
     void receivingChanged();
     void fingerprintChanged();
@@ -88,5 +98,6 @@ private:
     QProcess *m_scan = nullptr;
     QTimer *m_restart = nullptr;
     QElapsedTimer m_startedAt;
+    QString m_logPath;
     QByteArray m_serveBuffer;
 };

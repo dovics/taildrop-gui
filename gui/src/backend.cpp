@@ -2,7 +2,9 @@
 
 #include <QCoreApplication>
 #include <algorithm>
+#include <QDateTime>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -12,6 +14,24 @@
 Backend::Backend(QObject *parent) : QObject(parent) {
     m_engine = findEngine();
     emit enginePathChanged();
+}
+
+// One line per event, appended to a file under the state directory.
+// The launcher gives the app no terminal, so without this a failed drop leaves
+// no trace at all and the only symptom is "nothing happened".
+void Backend::logLine(const QString &line) {
+    if (m_logPath.isEmpty()) {
+        const QString dir = QStandardPaths::writableLocation(
+            QStandardPaths::GenericStateLocation);
+        QDir().mkpath(dir);
+        m_logPath = dir + "/taildrop.log";
+    }
+    QFile file(m_logPath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text))
+        return;
+    const QString stamped = QDateTime::currentDateTime().toString(Qt::ISODate)
+                            + " " + line + "\n";
+    file.write(stamped.toUtf8());
 }
 
 Backend::~Backend() {
@@ -315,8 +335,19 @@ QVariantMap Backend::peerByName(const QString &name) const {
     return {};
 }
 
+// QML's url cannot do this itself: toLocalFile() is a QUrl method and calling
+// it from QML throws, which silently aborted the drop handler.
+QString Backend::toLocalPath(const QUrl &url) const {
+    return url.toLocalFile();
+}
+
 void Backend::sendFiles(const QStringList &paths, const QString &toPeer, int port,
                         const QString &protocol) {
+    logLine(QStringLiteral("sendFiles: %1 file(s) to %2 port=%3 engine=%4")
+                .arg(paths.size())
+                .arg(toPeer)
+                .arg(port)
+                .arg(m_engine.isEmpty() ? QStringLiteral("<missing>") : m_engine));
     if (paths.isEmpty() || toPeer.isEmpty())
         return;
     if (m_engine.isEmpty()) {

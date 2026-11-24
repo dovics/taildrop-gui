@@ -15,6 +15,8 @@ Item {
     required property string ipv4
 
     signal filesDropped(var urls)
+    // The card cannot reach the window's toast, so it asks for it.
+    signal dropRejected(string reason)
 
     property bool hovered: false
 
@@ -111,21 +113,45 @@ Item {
     //
     // On Windows a URL looks like file:///C:/dir/a.txt, and stripping the
     // scheme by hand leaves /C:/dir/a.txt, which is not a valid path there.
-    // QUrl.toLocalFile knows the platform rules, so use it instead.
+    // QUrl.toLocalFile knows the platform rules, so ask C++ for the path:
+    // QML's url type does not expose that method.
     DropArea {
         anchors.fill: parent
-        enabled: card.online && card.canReceive
+        // Not gated on canReceive: a card that silently refuses the drop is
+        // indistinguishable from a broken app. Accept, then say why not.
+        onEntered: (drag) => { card.hovered = true }
+        onExited: { card.hovered = false }
         onDropped: (drop) => {
-            if (!drop.hasUrls)
+            backend.logLine("card drop on " + card.hostname +
+                            ": hasUrls=" + drop.hasUrls)
+            if (!drop.hasUrls) {
+                card.dropRejected(qsTr("That drop carried no files."))
                 return
+            }
+            if (!card.online || !card.canReceive) {
+                backend.logLine("card drop rejected: online=" + card.online +
+                                " canReceive=" + card.canReceive)
+                card.dropRejected(card.online
+                                  ? qsTr("%1 is not receiving files.").arg(card.hostname)
+                                  : qsTr("%1 is offline.").arg(card.hostname))
+                return
+            }
             const paths = []
             for (let i = 0; i < drop.urls.length; ++i) {
-                const local = drop.urls[i].toLocalFile()
+                const local = backend.toLocalPath(drop.urls[i])
+                backend.logLine("card url " + i + ": " + drop.urls[i].toString() +
+                                " -> " + local)
                 if (local.length > 0)
                     paths.push(local)
             }
-            if (paths.length > 0)
-                card.filesDropped(paths)
+            if (paths.length === 0) {
+                backend.logLine("card drop rejected: no local path")
+                card.dropRejected(qsTr("That drop carried no local files."))
+                return
+            }
+            backend.logLine("card sending " + paths.length + " file(s) to " +
+                            card.hostname)
+            card.filesDropped(paths)
         }
     }
 
