@@ -24,8 +24,13 @@ Prototype, verified end-to-end on a real tailnet (2026-11-24).
 | Forged upload token | 403 |
 | Name collision | second copy saved as `name (2).ext`, never overwritten |
 
-Not yet done: GUI, drag-and-drop, tray, send-to-menu, mobile, resume-on-failure,
-pairing/quick-save, history database.
+Not yet done: tray, send-to-menu, mobile, resume-on-failure, pairing/quick-save,
+history database.
+
+The GUI exists (`gui/`, Qt Quick) and is built with `./gui/bin/build`; the
+receiver starts with the window and restarts itself if it dies, so listening is
+not a button. Real mouse drag-and-drop on Wayland is still to be confirmed by
+hand.
 
 ## Layout
 
@@ -46,17 +51,25 @@ cli/            `taildrop-cli` binary
 cargo build --release
 
 # who is out there, and who can receive?
-./target/release/ferry peers
+./target/release/taildrop-cli peers
 
 # receive into ~/Downloads/Taildrop
-./target/release/ferry serve
+./target/release/taildrop-cli serve
 
 # receive into a specific directory, requiring a PIN
-./target/release/ferry serve --inbox ~/inbox --pin 1234
+./target/release/taildrop-cli serve --inbox ~/inbox --pin 1234
 
 # send
-./target/release/ferry send a.zip b.pdf --to desktop
-./target/release/ferry send a.zip --to desktop --expect-fingerprint <64 hex chars>
+./target/release/taildrop-cli send a.zip b.pdf --to desktop
+./target/release/taildrop-cli send a.zip --to desktop --expect-fingerprint <64 hex chars>
+```
+
+Graphical shell — the receiver starts on launch, so there is nothing to switch
+on:
+
+```sh
+./gui/bin/build
+TAILDROP_ENGINE=./target/release/taildrop-cli ./gui/build/taildrop-gui
 ```
 
 `--to` accepts a peer hostname, its MagicDNS name, or a literal tailnet IP.
@@ -66,6 +79,17 @@ cargo build --release
 **Ports.** Taildrop listens on 53318 and probes both 53318 and LocalSend's 53317,
 so a machine running only LocalSend is still found. Two servers on one port is a
 conflict nobody needs.
+
+**Listening is not a mode.** The GUI starts the receiver with the window and
+restarts it if it exits (1s, 2s, 4s … capped at 30s; the counter resets once a
+run has lasted a minute). A receiver that has to be switched on is a receiver
+that is off when someone tries to send you something.
+
+**Renaming the app changes its identity.** The device fingerprint is derived
+from a certificate in the state directory (`~/.local/state/taildrop` on Linux).
+Point the app at a different state directory and every existing pairing breaks,
+because peers see a new device. Once pairings matter, a rename needs a
+migration that carries the old certificate over.
 
 **Trust model.** Identity is the SHA-256 of the device's self-signed
 certificate, uppercase hex — the same form LocalSend uses. TLS is accepted
