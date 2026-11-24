@@ -21,7 +21,12 @@
 // or not set" before a window exists, and from the outside that is a window
 // that flashes and vanishes. Read the values the session does have and fill in
 // only the ones that are missing, so a deliberately overridden variable wins.
+//
+// Linux only, and the guard is load-bearing: popen() and setenv() are POSIX and
+// MSVC has neither, so compiling this on Windows fails outright. Windows needs
+// no equivalent — its launcher hands the app the normal desktop environment.
 static void adoptSessionEnvironment() {
+#if defined(Q_OS_LINUX)
     static const char *keys[] = {"XDG_RUNTIME_DIR", "WAYLAND_DISPLAY",
                                  "DISPLAY", "XDG_SESSION_TYPE"};
     bool missing = false;
@@ -66,6 +71,7 @@ static void adoptSessionEnvironment() {
         setenv(line, value, 1);
     }
     pclose(pipe);
+#endif
 }
 
 int main(int argc, char *argv[]) {
