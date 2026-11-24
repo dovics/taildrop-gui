@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Taildrop
+Comment=Send files over your tailnet by dropping them on a device
+Exec=taildrop-gui
+Icon=taildrop-gui
+Terminal=false
+Categories=Utility;Network;FileTransfer;
+StartupWMClass=taildrop-gui

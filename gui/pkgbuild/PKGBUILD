@@ -1,0 +1,25 @@
+pkgname=taildrop-gui
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Send files over your Tailscale tailnet by dropping them on a device'
+arch=('x86_64' 'aarch64')
+license=('Apache-2.0')
+depends=('qt6-base' 'qt6-declarative' 'qt6-wayland')
+makedepends=('gcc' 'make' 'rust' 'cargo')
+source=()
+sha256sums=()
+
+build() {
+  cd "$startdir/.."
+  ./gui/bin/build
+  cargo build --release -p taildrop-cli
+}
+
+package() {
+  cd "$startdir/.."
+  install -Dm755 gui/build/taildrop-gui "$pkgdir/usr/bin/ferry"
+  install -Dm755 target/release/taildrop-cli "$pkgdir/usr/bin/taildrop-cli"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$startdir/taildrop-gui.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/taildrop-gui.svg"
+  install -Dm644 "$startdir/taildrop-gui.desktop" "$pkgdir/usr/share/applications/taildrop-gui.desktop"
+}

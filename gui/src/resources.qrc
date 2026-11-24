@@ -1,0 +1,7 @@
+<RCC>
+    <qresource prefix="/">
+        <file alias="Main.qml">Main.qml</file>
+        <file alias="DeviceCard.qml">DeviceCard.qml</file>
+        <file alias="TransferRow.qml">TransferRow.qml</file>
+    </qresource>
+</RCC>

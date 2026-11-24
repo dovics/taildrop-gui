@@ -1,0 +1,21 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Qt build output
+/gui/build/
+*.o
+*.moc
+moc_*.cpp
+qrc_*.cpp
+Makefile
+.qmake.stash
+
+# Arch package output
+/gui/pkgbuild/pkg/
+/gui/pkgbuild/src/
+*.pkg.tar.*
+
+# Editor / OS
+*.swp
+.DS_Store
