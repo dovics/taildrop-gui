@@ -10,14 +10,19 @@ source=()
 sha256sums=()
 
 build() {
-  cd "$startdir/.."
+  cd "$startdir/../.."
   ./gui/bin/build
-  cargo build --release -p taildrop-cli
+
+  # ring (pulled in by rustls) builds assembly that does not survive makepkg's
+  # default -fno-plt / -z now: the link fails on undefined ring_core_* symbols.
+  # Clear the injected flags for the Rust half only.
+  CFLAGS="" CXXFLAGS="" LDFLAGS="" \
+    cargo build --release -p taildrop-cli
 }
 
 package() {
-  cd "$startdir/.."
-  install -Dm755 gui/build/taildrop-gui "$pkgdir/usr/bin/ferry"
+  cd "$startdir/../.."
+  install -Dm755 gui/build/taildrop-gui "$pkgdir/usr/bin/taildrop-gui"
   install -Dm755 target/release/taildrop-cli "$pkgdir/usr/bin/taildrop-cli"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 "$startdir/taildrop-gui.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/taildrop-gui.svg"

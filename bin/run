@@ -1,0 +1,8 @@
+#!/bin/sh
+# Run the GUI from a build tree. The engine is pointed at explicitly so the
+# window works without installing anything.
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+TAILDROP_ENGINE="$ROOT/target/release/taildrop-cli" \
+    exec "$ROOT/gui/build/taildrop-gui" "$@"
