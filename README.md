@@ -140,6 +140,17 @@ TAILDROP_ENGINE=./target/release/taildrop-cli ./gui/build/taildrop-gui --backgro
 omarchy dock pin taildrop-gui
 ```
 
+On Windows, unpack the release zip and run the installer next to the exe; it
+copies everything to `%LOCALAPPDATA%\Taildrop`, adds Start menu and Startup
+shortcuts (Startup passes `--background`) and starts the receiver:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File install-windows.ps1
+```
+
+The zip is self-contained (Qt DLLs, QML plugins and `taildrop-cli.exe` beside
+the exe), so there is no separate Qt install and nothing to add to `PATH`.
+
 `--to` accepts a peer hostname, its MagicDNS name, or a literal tailnet IP.
 
 ## Decisions worth knowing

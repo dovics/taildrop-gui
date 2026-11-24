@@ -67,8 +67,14 @@ ApplicationWindow {
     // only the window knows: whether it is showing, and what to do when the
     // tray asks for something.
     function syncTray() {
+        // "Listening, 2 devices" is the useful count: peers that can actually
+        // take a file, not every machine on the tailnet.
+        var ready = 0
+        for (var i = 0; i < backend.peers.length; ++i)
+            if (backend.peers[i].canReceive)
+                ++ready
         tray.setWindowVisible(win.visible)
-        tray.updateState(backend.receiving, backend.peers.length)
+        tray.updateState(backend.receiving, ready)
     }
 
     onVisibleChanged: syncTray()

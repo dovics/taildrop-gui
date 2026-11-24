@@ -80,13 +80,14 @@ void Tray::refresh() {
         return;
 
     // The tooltip is the only place a background app can say "I am alive"
-    // without opening anything or making a sound.
-    m_icon->setToolTip(m_receiving
-                           ? tr("Taildrop — listening")
-                           : tr("Taildrop — offline"));
-    m_status->setText(m_receiving ? tr("Listening") : tr("Offline"));
+    // without opening anything or making a sound, and how many machines could
+    // actually take a file right now is the question it can answer.
+    QString state = tr("Taildrop — listening");
+    if (m_receiving && m_peers > 0)
+        state = tr("Taildrop — listening, %n device(s)", "", m_peers);
+    m_icon->setToolTip(m_receiving ? state : tr("Taildrop — offline"));
+    m_status->setText(m_receiving ? state : tr("Offline"));
     m_toggle->setText(m_visible ? tr("Hide window") : tr("Open Taildrop"));
-    Q_UNUSED(m_peers)
 }
 
 void Tray::announceArrival(const QString &fileName) {
