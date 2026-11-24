@@ -16,17 +16,24 @@ SingleInstance::~SingleInstance() {
 }
 
 bool SingleInstance::claim(bool bringForward) {
-    // Ask before listening: a live instance answers, and that answer is also how
-    // a stale socket file left by a crash is told apart from a running app.
+    // Ask before listening: a live instance answers. The way the connect fails
+    // is what tells a running app apart from the socket file a crash left
+    // behind, and that distinction matters: deleting the file of a live
+    // instance would leave it running and unreachable, listening to nothing.
     QLocalSocket probe;
     probe.connectToServer(m_key);
     if (probe.waitForConnected(500)) {
-        if (bringForward) {
-            probe.write("show");
-            probe.flush();
-            probe.waitForBytesWritten(500);
-        }
+        if (bringForward)
+            tellRunningInstanceToShow();
         probe.disconnectFromServer();
+        return false;
+    }
+    if (probe.error() != QLocalSocket::ServerNotFoundError &&
+        probe.error() != QLocalSocket::ConnectionRefusedError) {
+        // Still busy or starting up, not provably dead: assume it is alive and
+        // leave its socket alone rather than risk stranding it.
+        if (bringForward)
+            tellRunningInstanceToShow();
         return false;
     }
 
@@ -35,21 +42,27 @@ bool SingleInstance::claim(bool bringForward) {
     if (!m_server->listen(m_key)) {
         // Losing the race with another launch is not an error: that instance
         // owns the name now, so behave as if it had answered.
-        if (bringForward) {
-            QLocalSocket late;
-            late.connectToServer(m_key);
-            if (late.waitForConnected(500)) {
-                late.write("show");
-                late.flush();
-                late.waitForBytesWritten(500);
-                late.disconnectFromServer();
-            }
-        }
+        if (bringForward)
+            tellRunningInstanceToShow();
         return false;
     }
 
     connect(m_server, &QLocalServer::newConnection, this,
             &SingleInstance::acceptConnection);
+    return true;
+}
+
+// One connection, one word: "show". A launch without it is an autostart saying
+// the app is already fine as it is.
+bool SingleInstance::tellRunningInstanceToShow() {
+    QLocalSocket socket;
+    socket.connectToServer(m_key);
+    if (!socket.waitForConnected(500))
+        return false;
+    socket.write("show");
+    socket.flush();
+    socket.waitForBytesWritten(500);
+    socket.disconnectFromServer();
     return true;
 }
 

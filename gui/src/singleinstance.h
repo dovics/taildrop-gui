@@ -37,6 +37,7 @@ signals:
 
 private:
     void acceptConnection();
+    bool tellRunningInstanceToShow();
     void handleSocket(QLocalSocket *socket);
 
     QString m_key;
