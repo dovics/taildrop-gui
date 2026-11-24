@@ -74,33 +74,46 @@ jobs:
           copy gui\pkgbuild\install-windows.ps1 taildrop-windows-x64\install-windows.ps1
           powershell -Command "Compress-Archive -Path taildrop-windows-x64 -DestinationPath taildrop-windows-x64.zip -Force"
 
-      # Start the app on a real Windows machine. The tray is the part that
-      # cannot be checked from anywhere else: Qt.labs.platform's tray reports
-      # itself unavailable on Windows, so a regression there looks like a
-      # working build whose window closes into nothing.
+      # Start the app on a real Windows machine. What cannot be checked from
+      # anywhere else is Windows behaviour itself: a tray that silently never
+      # appears, a --background start that paints a window first, or a second
+      # launch that becomes a second receiver. Each of those builds fine and
+      # fails only for the person using it.
       - name: Smoke test the window and the tray
         shell: pwsh
         run: |
           $exe = "gui\build-win\taildrop-gui.exe"
-          $p = Start-Process -FilePath $exe -ArgumentList '--background' -PassThru
+
+          # 1. Background start: listening, with no window. This is how the
+          #    Startup shortcut runs it, and a window flashing up at every login
+          #    is exactly what it must not do.
+          $bg = Start-Process -FilePath $exe -ArgumentList '--background' -PassThru
           Start-Sleep -Seconds 6
-          if ($p.HasExited) { throw "Taildrop exited on its own with code $($p.ExitCode)" }
-          # The receiver listens in the background; if the engine never came up
-          # there is nothing to receive with.
-          $serve = Get-Process taildrop-cli -ErrorAction SilentlyContinue
-          if (-not $serve) { throw "taildrop-cli did not start; the app is not listening" }
-          # A second launch must not fork a second receiver; it exists to ask
-          # the first one to show itself.
+          if ($bg.HasExited) { throw "background start exited with code $($bg.ExitCode)" }
+          $visible = @(Get-Process taildrop-gui | Where-Object { $_.MainWindowHandle -ne 0 })
+          if ($visible.Count -ne 0) { throw "--background opened a window" }
+
+          # 2. The engine is really listening; without it there is nothing to
+          #    receive with and the tray icon would lie.
+          if (-not (Get-Process taildrop-cli -ErrorAction SilentlyContinue)) {
+            throw "taildrop-cli did not start; the app is not listening"
+          }
+
+          # 3. A second launch is a request to show the window, not a second
+          #    receiver that would fail to bind 53318.
           $second = Start-Process -FilePath $exe -PassThru -Wait
           if ($second.ExitCode -ne 0) { throw "second launch exited with $($second.ExitCode)" }
+          Start-Sleep -Seconds 2
+
           $instances = @(Get-Process taildrop-gui -ErrorAction SilentlyContinue)
           if ($instances.Count -ne 1) { throw "expected 1 taildrop-gui, found $($instances.Count)" }
-          # The window has to exist and be findable, which is what the tray's
-          # "Open Taildrop" relies on.
-          $windows = Get-Process taildrop-gui | Where-Object { $_.MainWindowHandle -ne 0 }
-          if (-not $windows) { throw "no window was created" }
-          Stop-Process -Id $p.Id -Force
-          Write-Host "window created, tray process alive, single instance enforced"
+          $visible = @(Get-Process taildrop-gui | Where-Object { $_.MainWindowHandle -ne 0 })
+          if ($visible.Count -ne 1) { throw "the running instance did not show its window" }
+          $engines = @(Get-Process taildrop-cli -ErrorAction SilentlyContinue)
+          if ($engines.Count -ne 1) { throw "expected 1 receiver, found $($engines.Count)" }
+
+          Stop-Process -Id $bg.Id -Force
+          Write-Host "background start hides, second launch shows, one receiver throughout"
 
       - uses: actions/upload-artifact@v4
         with:
