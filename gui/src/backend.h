@@ -45,6 +45,16 @@ public:
     // brings the receiver back if it ever dies.
     Q_INVOKABLE void startAutoReceive();
 
+    // Discovery runs itself: a scan shortly after launch, another as soon as the
+    // receiver is up, then a periodic one, plus an immediate one whenever a peer
+    // announces it just came online. Manual rescans (button, Ctrl+R) reuse the
+    // same path, so there is one definition of "refresh the list".
+    Q_INVOKABLE void startRescanCycle();
+    Q_INVOKABLE void announceOnline();
+    // Used by the tests to keep a periodic-scan check short; the app leaves it
+    // at the default.
+    Q_INVOKABLE void setRescanIntervalMs(int ms);
+
     Q_INVOKABLE void startReceiving(const QString &inbox = {}, int port = 0,
                                    const QString &pin = {});
     Q_INVOKABLE void stopReceiving();
@@ -80,6 +90,7 @@ private:
     void handleServeLine(const QString &line);
     void handlePeersOutput(const QString &output);
     void watchTransfer(QProcess *process, const QVariantMap &transfer);
+    void pingPeersForRescan();
 
     QString m_engine;
     bool m_receiving = false;
@@ -100,4 +111,13 @@ private:
     QElapsedTimer m_startedAt;
     QString m_logPath;
     QByteArray m_serveBuffer;
+
+    QTimer *m_rescanTimer = nullptr;
+    // Announcing is started only after the receiver answers "ready": a peer
+    // that rescans the moment we announce must find us actually listening.
+    bool m_announced = false;
+    // Coalesces a burst of announces (several machines starting at once) into
+    // one scan, instead of one scan each.
+    QTimer *m_rescanCoalesce = nullptr;
+    int m_rescanIntervalMs = 30000;
 };

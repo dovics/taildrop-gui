@@ -11,6 +11,64 @@
 class TaildropTests : public QObject {
     Q_OBJECT
 
+private:
+    // A stand-in for the Rust engine, so the scan schedule and the announce
+    // path can be observed without a tailnet. Each `peers --json` call appends
+    // a line to a counter file; `serve` says it is ready, and in announcing
+    // mode also reports a peer coming online a second later.
+    QString m_fakeEngine;
+    QTemporaryDir m_temp;
+
+    QString makeFakeEngine(bool announcing)
+    {
+#ifdef Q_OS_UNIX
+        const QString dir = m_temp.path();
+        m_fakeEngine = dir + "/taildrop-cli";
+        const QString counter = dir + (announcing ? "/announce-count" : "/scan-count");
+        QFile::remove(counter);
+
+        QString script = QStringLiteral(
+            "#!/bin/sh\n"
+            "case \"$1\" in\n"
+            "  peers) echo x >> %1; echo '[]'; exit 0 ;;\n"
+            "  announce) exit 0 ;;\n"
+            "  serve)\n"
+            "    echo '{\"event\":\"ready\",\"alias\":\"fake\",\"fingerprint\":\"AB\",\"inbox\":\"/tmp\",\"port\":53318}'\n")
+            .arg(counter);
+        if (announcing) {
+            // Printed once the receiver has been up a moment, exactly as a peer
+            // starting on another machine would.
+            script += QStringLiteral(
+                "    ( sleep 1; echo '{\"event\":\"announce\",\"alias\":\"peer\",\"fromAddr\":\"100.1.1.1:1\",\"fingerprint\":\"CD\"}' ) &\n");
+        }
+        script += QStringLiteral(
+            "    cat > /dev/null\n"
+            "    exit 0 ;;\n"
+            "esac\n"
+            "exit 1\n");
+
+        QFile file(m_fakeEngine);
+        if (!file.open(QIODevice::WriteOnly))
+            return {};
+        file.write(script.toUtf8());
+        file.close();
+        QFile::setPermissions(
+            m_fakeEngine, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+        return counter;
+#else
+        Q_UNUSED(announcing)
+        return {};
+#endif
+    }
+
+    static int scanCount(const QString &counter)
+    {
+        QFile file(counter);
+        if (!file.open(QIODevice::ReadOnly))
+            return 0;
+        return int(file.readAll().count('\n'));
+    }
+
 private slots:
     void themeFallsBack()
     {
@@ -101,6 +159,43 @@ private slots:
     {
         Backend backend;
         QVERIFY(backend.peerByName("nobody").isEmpty());
+    }
+
+    // Discovery must not depend on the user pressing Rescan. A fake engine
+    // counts the scans it is asked for, which is the only externally visible
+    // sign that the timer and the announce path both fire.
+    void rescanCycleScansWithoutBeingAsked()
+    {
+        const QString counter = makeFakeEngine(false);
+        if (counter.isEmpty())
+            QSKIP("needs a POSIX shell to fake the engine");
+        qputenv("TAILDROP_ENGINE", m_fakeEngine.toUtf8());
+
+        Backend backend;
+        backend.setRescanIntervalMs(150);
+        backend.startRescanCycle();
+
+        // Two ticks, not one: proves the timer repeats rather than firing once.
+        QTRY_VERIFY_WITH_TIMEOUT(scanCount(counter) >= 2, 5000);
+        qunsetenv("TAILDROP_ENGINE");
+    }
+
+    void peerAnnounceTriggersARescan()
+    {
+        const QString counter = makeFakeEngine(true);
+        if (counter.isEmpty())
+            QSKIP("needs a POSIX shell to fake the engine");
+        qputenv("TAILDROP_ENGINE", m_fakeEngine.toUtf8());
+
+        Backend backend;
+        // No periodic timer at all: any scan can only have come from the
+        // announce the fake receiver emits a second after going ready.
+        backend.startAutoReceive();
+        QCOMPARE(scanCount(counter), 0);
+
+        QTRY_VERIFY_WITH_TIMEOUT(scanCount(counter) >= 1, 8000);
+        backend.stopReceiving();
+        qunsetenv("TAILDROP_ENGINE");
     }
 
     // The drop handler converts dropped URLs to paths for the Rust engine.

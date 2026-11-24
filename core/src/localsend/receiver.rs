@@ -78,6 +78,22 @@ pub struct ReceivedFile {
 
 pub type ReceiveCallback = Arc<dyn Fn(ReceivedFile) + Send + Sync>;
 
+/// A peer saying it just came online.
+///
+/// Standard LocalSend has no such message: its own discovery is multicast, which
+/// does not cross a tailnet. Announcements are therefore our own addition, used
+/// only between Taildrop peers, so that a machine that starts up does not stay
+/// invisible until every other machine's next periodic scan.
+#[derive(Debug, Clone)]
+pub struct Announcement {
+    pub alias: String,
+    /// Peer's TCP address, e.g. `100.117.121.13:52123`.
+    pub from_addr: String,
+    pub fingerprint: String,
+}
+
+pub type AnnounceCallback = Arc<dyn Fn(Announcement) + Send + Sync>;
+
 // ---------------------------------------------------------------------------
 // server config
 // ---------------------------------------------------------------------------
@@ -94,6 +110,8 @@ pub struct ServerConfig {
     pub policy: Option<Arc<dyn Fn(&str) -> Decision + Send + Sync>>,
     /// Called once per completed file.
     pub on_received: Option<ReceiveCallback>,
+    /// Called when another Taildrop peer announces it has come online.
+    pub on_announce: Option<AnnounceCallback>,
 }
 
 /// State shared by all request handlers.
@@ -103,6 +121,7 @@ struct AppState {
     pin: Option<String>,
     policy: Option<Arc<dyn Fn(&str) -> Decision + Send + Sync>>,
     on_received: Option<ReceiveCallback>,
+    on_announce: Option<AnnounceCallback>,
     /// Set while a session is uploading, so a second sender gets 409.
     busy: Mutex<bool>,
     bytes_written: AtomicU64,
@@ -144,6 +163,7 @@ pub async fn start(cfg: ServerConfig) -> Result<ServerHandle> {
         pin: cfg.pin.clone(),
         policy: cfg.policy.clone(),
         on_received: cfg.on_received.clone(),
+        on_announce: cfg.on_announce.clone(),
         busy: Mutex::new(false),
         bytes_written: AtomicU64::new(0),
     });
@@ -264,6 +284,15 @@ async fn handle(
             let chunk = req.into_body();
             upload(&state, chunk, &query, peer).await
         }
+        ("POST", "/api/localsend/v2/announce") => {
+            // Body is optional: an announce that carries nothing still means
+            // "I am up, refresh your list".
+            let body = match req.into_body().collect().await {
+                Ok(b) => b.to_bytes(),
+                Err(_) => bytes::Bytes::new(),
+            };
+            announce(&state, &body, peer)
+        }
         ("POST", "/api/localsend/v2/cancel") => {
             release_busy(&state);
             json_ok_empty()
@@ -334,6 +363,29 @@ fn register(state: &AppState, body: &[u8]) -> Resp {
         }
         Err(e) => json_error(400, &format!("invalid register body: {e}")),
     }
+}
+
+/// Lenient view of an announce body: the fields are display hints, and a peer
+/// that sends none of them is still telling us something true.
+#[derive(serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct AnnounceIn {
+    #[serde(default)]
+    alias: String,
+    #[serde(default)]
+    fingerprint: String,
+}
+
+fn announce(state: &AppState, body: &[u8], peer: SocketAddr) -> Resp {
+    let parsed = serde_json::from_slice::<AnnounceIn>(body).unwrap_or_default();
+    if let Some(cb) = &state.on_announce {
+        cb(Announcement {
+            alias: parsed.alias,
+            from_addr: peer.to_string(),
+            fingerprint: parsed.fingerprint,
+        });
+    }
+    json_ok_empty()
 }
 
 /// Session bookkeeping for in-flight uploads.

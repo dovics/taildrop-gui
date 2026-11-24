@@ -148,6 +148,39 @@ pub async fn probe(
         .context("decoding register response")
 }
 
+/// Tell a peer we are online, so it rescans now instead of at its next tick.
+///
+/// Best effort by design: a peer that is a different build, or a phone running
+/// stock LocalSend, answers 404, and that is not an error worth surfacing — the
+/// periodic scan still finds it.
+pub async fn announce(
+    client: &reqwest::Client,
+    endpoint: &Endpoint,
+    info: &DeviceInfo,
+    timeout: Duration,
+) -> Result<()> {
+    let body = serde_json::json!({
+        "alias": info.alias,
+        "fingerprint": info.fingerprint,
+        "port": info.port,
+        "protocol": info.protocol,
+    });
+    let url = format!("{}/api/localsend/v2/announce", endpoint.base_url());
+    let resp = client
+        .post(&url)
+        .json(&body)
+        .timeout(timeout)
+        .send()
+        .await
+        .with_context(|| format!("announcing to {url}"))?;
+    let status = resp.status();
+    if status.is_success() || status == reqwest::StatusCode::NO_CONTENT {
+        Ok(())
+    } else {
+        bail!("peer did not accept the announcement: {status}")
+    }
+}
+
 /// Compare the fingerprint a peer claims against the one its certificate
 /// proves, and against what we remembered.
 ///

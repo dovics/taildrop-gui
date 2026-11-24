@@ -318,7 +318,7 @@ ApplicationWindow {
 
                     Repeater {
                         model: [
-                            { key: "Ctrl+R / F5", what: qsTr("Rescan devices") },
+                            { key: "Ctrl+R / F5", what: qsTr("Rescan devices now") },
                             { key: "Drag & drop", what: qsTr("Send files to a device") },
                             { key: "?", what: qsTr("This list") },
                             { key: "Ctrl+Q", what: qsTr("Quit") }
@@ -393,6 +393,10 @@ ApplicationWindow {
 
     Component.onCompleted: {
         backend.startAutoReceive()
+        // One scan at launch, then the periodic one; the backend also rescans
+        // as soon as a peer says it came online, so this is not the only way
+        // the list ever changes.
         backend.scanPeers()
+        backend.startRescanCycle()
     }
 }

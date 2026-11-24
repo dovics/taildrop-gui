@@ -38,6 +38,23 @@ with several, drop on the card you mean.
 
 Real mouse drag-and-drop on Wayland is still to be confirmed by hand.
 
+## Discovery
+
+Nothing has to be clicked for the device list to be right:
+
+| When | What happens |
+|---|---|
+| Window opens | one scan immediately (`Component.onCompleted`) |
+| Receiver answers `ready` | `taildrop-cli announce` tells every online peer this machine is up |
+| Every 30 s | periodic scan; any scan (manual or announce-driven) restarts the interval |
+| A peer announces itself | `POST /api/localsend/v2/announce` → one coalesced rescan ~1.2 s later |
+| Ctrl+R / F5 / Rescan | scan now |
+
+`/api/localsend/v2/announce` is our own endpoint, not part of LocalSend: stock
+LocalSend peers answer 404, which counts as "not Taildrop" and is expected — the
+periodic scan is what covers them. Every message here travels inside the
+tailnet over mutual TLS, so an announcement cannot come from anywhere else.
+
 ## Layout
 
 ```

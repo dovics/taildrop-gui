@@ -36,12 +36,33 @@ void Backend::logLine(const QString &line) {
 
 Backend::~Backend() {
     m_shuttingDown = true;
+    if (m_rescanTimer) {
+        m_rescanTimer->stop();
+        m_rescanTimer->deleteLater();
+        m_rescanTimer = nullptr;
+    }
+    if (m_rescanCoalesce) {
+        m_rescanCoalesce->stop();
+        m_rescanCoalesce->deleteLater();
+        m_rescanCoalesce = nullptr;
+    }
     if (m_restart) {
         m_restart->stop();
         m_restart->deleteLater();
         m_restart = nullptr;
     }
     stopServeProcess();
+
+    // A scan in flight owns a child process. Letting QProcess's destructor find
+    // it still running prints a warning and leaves the engine alive for a
+    // moment after the window is gone.
+    if (m_scan) {
+        m_scan->disconnect(this);
+        m_scan->kill();
+        m_scan->waitForFinished(1000);
+        m_scan->deleteLater();
+        m_scan = nullptr;
+    }
 }
 
 // The receiver is the point of the app, so it starts with the window instead of
@@ -51,6 +72,93 @@ void Backend::startAutoReceive() {
     if (m_receiving || m_serve)
         return;
     startReceiving({}, 0, {});
+}
+
+// Discovery is not a button the user has to remember to press.
+//
+// A tailnet is small and changes rarely, so a scan is cheap; but a machine that
+// starts up while this one is idle is exactly the case a manual button gets
+// wrong. Every trigger below goes through scanPeers(), so there is one
+// definition of "refresh the list": launch (Main.qml), this timer, and a peer's
+// announcement.
+void Backend::startRescanCycle() {
+    if (!m_rescanTimer) {
+        m_rescanTimer = new QTimer(this);
+        m_rescanTimer->setInterval(m_rescanIntervalMs);
+        connect(m_rescanTimer, &QTimer::timeout, this, [this] {
+            if (m_shuttingDown || m_scanning)
+                return;
+            logLine(QStringLiteral("rescan: periodic (%1 ms)").arg(m_rescanIntervalMs));
+            scanPeers();
+        });
+    }
+    m_rescanTimer->start();
+}
+
+void Backend::setRescanIntervalMs(int ms) {
+    m_rescanIntervalMs = std::max(100, ms);
+    if (m_rescanTimer)
+        m_rescanTimer->setInterval(m_rescanIntervalMs);
+}
+
+// Tell the tailnet we are up, so every other Taildrop rescans now.
+//
+// Runs after the receiver has reported "ready": an announcement that outraces
+// our own listener just makes peers scan for a machine that is not there yet.
+void Backend::announceOnline() {
+    if (m_announced || m_engine.isEmpty() || m_shuttingDown)
+        return;
+    m_announced = true;
+    logLine(QStringLiteral("announce: telling peers this machine is online"));
+
+    auto *process = new QProcess(this);
+    process->setProgram(m_engine);
+    process->setArguments({"announce", "--json", "--timeout-ms", "1500"});
+
+    connect(process, &QProcess::finished, this,
+            [this, process](int code, QProcess::ExitStatus) {
+                const QString out =
+                    QString::fromUtf8(process->readAllStandardOutput()).trimmed();
+                process->deleteLater();
+                // Not an error the user has to see: peers on another build
+                // simply do not answer, and the periodic scan still covers them.
+                logLine(code == 0 ? QStringLiteral("announce: %1").arg(out)
+                                  : QStringLiteral("announce failed (exit %1): %2")
+                                        .arg(code)
+                                        .arg(out));
+            });
+
+    connect(process, &QProcess::errorOccurred, this,
+            [this, process](QProcess::ProcessError) {
+                process->deleteLater();
+                logLine(QStringLiteral("announce: could not start the engine"));
+            });
+
+    process->start();
+}
+
+// A peer says it just came online. Scan once for the burst, not once each.
+void Backend::pingPeersForRescan() {
+    if (m_shuttingDown)
+        return;
+    if (!m_rescanCoalesce) {
+        m_rescanCoalesce = new QTimer(this);
+        m_rescanCoalesce->setSingleShot(true);
+        m_rescanCoalesce->setInterval(1200);
+        connect(m_rescanCoalesce, &QTimer::timeout, this, [this] {
+            if (m_shuttingDown)
+                return;
+            // A scan already running will not include the new peer; retry
+            // rather than drop the announce and wait for the periodic tick.
+            if (m_scanning) {
+                m_rescanCoalesce->start();
+                return;
+            }
+            logLine(QStringLiteral("rescan: a peer announced it is online"));
+            scanPeers();
+        });
+    }
+    m_rescanCoalesce->start();
 }
 
 void Backend::scheduleReceiverRestart() {
@@ -160,6 +268,10 @@ void Backend::startReceiving(const QString &inbox, int port, const QString &pin)
                 // port that was taken. Both are retried by scheduleReceiverRestart.
                 if (m_shuttingDown || code == 15)
                     return;
+                // The receiver went away without us asking; when it comes back
+                // it should say hello again, or every peer that rescanned in
+                // the gap keeps showing us as offline.
+                m_announced = false;
                 if (code != 0)
                     setStatus(tr("Receiver stopped (exit %1), restarting…").arg(code));
                 scheduleReceiverRestart();
@@ -201,6 +313,19 @@ void Backend::handleServeLine(const QString &line) {
         emit fingerprintChanged();
         emit inboxChanged();
         setStatus(tr("Receiving on port %1").arg(obj.value("port").toInt()));
+        // Now that we are actually listening, tell the tailnet.
+        announceOnline();
+        return;
+    }
+
+    if (event == "announce") {
+        // A peer just started. Waiting for the periodic scan would leave it
+        // invisible for up to a whole interval, which is the gap this closes.
+        const QString who = obj.value("alias").toString();
+        logLine(QStringLiteral("peer announced: %1 from %2")
+                    .arg(who.isEmpty() ? QStringLiteral("<unnamed>") : who)
+                    .arg(obj.value("fromAddr").toString()));
+        pingPeersForRescan();
         return;
     }
 
@@ -260,6 +385,11 @@ void Backend::scanPeers() {
     m_scanning = true;
     emit scanningChanged();
     setStatus(tr("Looking for devices…"));
+    // Any scan counts as the periodic one, so a manual rescan or a peer's
+    // announce pushes the next automatic scan a full interval away instead of
+    // letting one land seconds later.
+    if (m_rescanTimer && m_rescanTimer->isActive())
+        m_rescanTimer->start();
 
     m_scan = new QProcess(this);
     m_scan->setProgram(m_engine);

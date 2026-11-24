@@ -54,6 +54,18 @@ enum Cmd {
         #[arg(long)]
         expect_fingerprint: Option<String>,
     },
+    /// Tell every online peer that this machine is up, so they rescan now.
+    Announce {
+        /// Port to announce on (both defaults are tried when omitted).
+        #[arg(long)]
+        port: Option<u16>,
+        /// Per-announce timeout in milliseconds.
+        #[arg(long, default_value_t = 1500)]
+        timeout_ms: u64,
+        /// Emit JSON instead of a table.
+        #[arg(long)]
+        json: bool,
+    },
     /// Run the receiver: save incoming files into a directory.
     Serve {
         /// Directory to save files into.
@@ -92,6 +104,11 @@ async fn main() -> Result<()> {
             expect_fingerprint,
         } => cmd_send(files, to, port, tls, pin, expect_fingerprint).await,
         Cmd::Serve { inbox, port, pin, json } => cmd_serve(inbox, port, pin, json).await,
+        Cmd::Announce {
+            port,
+            timeout_ms,
+            json,
+        } => cmd_announce(port, timeout_ms, json).await,
     }
 }
 
@@ -101,7 +118,7 @@ async fn cmd_serve(
     pin: Option<String>,
     json: bool,
 ) -> Result<()> {
-    use taildrop_core::localsend::receiver::{self, ReceivedFile, ServerConfig};
+    use taildrop_core::localsend::receiver::{self, Announcement, ReceivedFile, ServerConfig};
 
     let alias = hostname();
     let identity = Identity::load_or_create(&Identity::default_dir(), &alias)?;
@@ -149,6 +166,26 @@ async fn cmd_serve(
         write_stdout(&line);
     });
 
+    // Another machine starting up says hello; the UI turns this into an
+    // immediate rescan instead of waiting for its next periodic tick.
+    let on_announce = std::sync::Arc::new(move |a: Announcement| {
+        if json {
+            let event = serde_json::json!({
+                "event": "announce",
+                "alias": a.alias,
+                "fromAddr": a.from_addr,
+                "fingerprint": a.fingerprint,
+            });
+            write_stdout(&format!("{event}\n"));
+        } else {
+            write_stdout(&format!(
+                "↻ {} is online ({})\n",
+                if a.alias.is_empty() { "a peer" } else { &a.alias },
+                a.from_addr
+            ));
+        }
+    });
+
     let handle = receiver::start(ServerConfig {
         identity,
         inbox: inbox_path.clone(),
@@ -156,6 +193,7 @@ async fn cmd_serve(
         pin,
         policy: None,
         on_received: Some(on_received),
+        on_announce: Some(on_announce),
     })
     .await?;
 
@@ -428,6 +466,87 @@ async fn cmd_peers(
     println!("{ready} of {} peer(s) accept transfers", candidates.len());
     if ready == 0 && !candidates.is_empty() {
         println!("tip: peers need Taildrop or LocalSend running to receive files");
+    }
+    Ok(())
+}
+
+/// Announce ourselves to every online peer on the tailnet.
+///
+/// This is the "I just started" half of the discovery pair: the receiver side
+/// answers by rescanning, so a machine that comes up while the others are idle
+/// appears at once instead of at whatever their next periodic scan happens to
+/// be. Peers that are not Taildrop (a phone running stock LocalSend) answer
+/// 404 and are reported as such — not an error.
+async fn cmd_announce(port: Option<u16>, timeout_ms: u64, json: bool) -> Result<()> {
+    let snap = tailscale::fetch_status()
+        .await
+        .context("reading the tailnet device list from Tailscale")?;
+
+    let identity = Identity::load_or_create(&Identity::default_dir(), &hostname())?;
+    let client = sender::build_client(&identity)?;
+    let info = local_info(&identity);
+    let timeout = Duration::from_millis(timeout_ms);
+    let ports: Vec<u16> = match port {
+        Some(p) => vec![p],
+        None => vec![DEFAULT_PORT, 53317],
+    };
+
+    let mut tasks = Vec::new();
+    for peer in snap.online_peers() {
+        let addr = match peer.dial_addr() {
+            Some(a) => a,
+            None => continue,
+        };
+        let client = client.clone();
+        let info = info.clone();
+        let ports = ports.clone();
+        let hostname = peer.hostname.clone();
+        tasks.push(tokio::spawn(async move {
+            for p in ports {
+                for proto in [Protocol::Https, Protocol::Http] {
+                    let ep = Endpoint::new(addr.clone(), p, proto);
+                    if sender::announce(&client, &ep, &info, timeout).await.is_ok() {
+                        return (hostname, true);
+                    }
+                }
+            }
+            (hostname, false)
+        }));
+    }
+
+    let mut told: Vec<String> = Vec::new();
+    let mut silent: Vec<String> = Vec::new();
+    for t in tasks {
+        if let Ok((name, ok)) = t.await {
+            if ok {
+                told.push(name);
+            } else {
+                silent.push(name);
+            }
+        }
+    }
+    told.sort();
+    silent.sort();
+
+    if json {
+        let out = serde_json::json!({
+            "announced": told,
+            "notTaildrop": silent,
+        });
+        println!("{}", serde_json::to_string(&out)?);
+        return Ok(());
+    }
+
+    println!(
+        "announced to {} of {} online peer(s)",
+        told.len(),
+        told.len() + silent.len()
+    );
+    for name in &told {
+        println!("  ✓ {name} will rescan");
+    }
+    for name in &silent {
+        println!("  - {name} did not answer (not Taildrop, or still starting)");
     }
     Ok(())
 }
