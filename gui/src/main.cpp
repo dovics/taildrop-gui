@@ -1,6 +1,6 @@
 // Taildrop — send files over your tailnet by dropping them on a device.
 
-#include <QGuiApplication>
+#include <QApplication>
 #include <QIcon>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -12,9 +12,11 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "appicon.h"
 #include "backend.h"
 #include "singleinstance.h"
 #include "theme.h"
+#include "tray.h"
 
 // Launching from the app launcher is not the same as launching from a shell.
 //
@@ -82,7 +84,14 @@ int main(int argc, char *argv[]) {
     // its constructor and aborts if the runtime directory is absent.
     adoptSessionEnvironment();
 
-    QGuiApplication app(argc, argv);
+    // QApplication, not QGuiApplication: the tray icon is a QtWidgets class,
+    // and a QSystemTrayIcon created under a plain QGuiApplication has no
+    // widget-style platform integration behind it on Windows.
+    QApplication app(argc, argv);
+    // Hiding the window must not end the app; only an explicit quit does. This
+    // matters most on Windows, where the close button is the normal way to
+    // leave a program and Qt's default is to exit with the last window.
+    app.setQuitOnLastWindowClosed(false);
     app.setApplicationName("taildrop-gui");
     // The tray and a second launch both talk to this name; changing it would
     // silently allow two receivers that fight over the same port.
@@ -93,7 +102,10 @@ int main(int argc, char *argv[]) {
     // Matches the window to taildrop-gui.desktop, so the compositor (Wayland app_id)
     // and the launcher pick up the installed icon.
     app.setDesktopFileName("taildrop-gui");
-    app.setWindowIcon(QIcon::fromTheme("taildrop-gui"));
+    // fromTheme() is a Linux idea: Windows has no icon theme, so the app would
+    // show a generic square in the taskbar and the version dialog. The artwork
+    // travels in the binary.
+    app.setWindowIcon(taildropIcon());
 
     QQuickStyle::setStyle("Material");
 
@@ -122,10 +134,12 @@ int main(int argc, char *argv[]) {
 
     Theme theme;
     Backend backend;
+    Tray tray;
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("theme", &theme);
     engine.rootContext()->setContextProperty("instance", &instance);
+    engine.rootContext()->setContextProperty("tray", &tray);
     // Read by the window before it is created, so a background start never
     // paints a window first and hides it after.
     engine.rootContext()->setContextProperty("startHiddenAtLaunch", startHidden);

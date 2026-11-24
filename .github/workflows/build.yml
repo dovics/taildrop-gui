@@ -71,7 +71,36 @@ jobs:
         run: |
           mkdir taildrop-windows-x64
           xcopy /E /I /Y gui\build-win taildrop-windows-x64
+          copy gui\pkgbuild\install-windows.ps1 taildrop-windows-x64\install-windows.ps1
           powershell -Command "Compress-Archive -Path taildrop-windows-x64 -DestinationPath taildrop-windows-x64.zip -Force"
+
+      # Start the app on a real Windows machine. The tray is the part that
+      # cannot be checked from anywhere else: Qt.labs.platform's tray reports
+      # itself unavailable on Windows, so a regression there looks like a
+      # working build whose window closes into nothing.
+      - name: Smoke test the window and the tray
+        shell: pwsh
+        run: |
+          $exe = "gui\build-win\taildrop-gui.exe"
+          $p = Start-Process -FilePath $exe -ArgumentList '--background' -PassThru
+          Start-Sleep -Seconds 6
+          if ($p.HasExited) { throw "Taildrop exited on its own with code $($p.ExitCode)" }
+          # The receiver listens in the background; if the engine never came up
+          # there is nothing to receive with.
+          $serve = Get-Process taildrop-cli -ErrorAction SilentlyContinue
+          if (-not $serve) { throw "taildrop-cli did not start; the app is not listening" }
+          # A second launch must not fork a second receiver; it exists to ask
+          # the first one to show itself.
+          $second = Start-Process -FilePath $exe -PassThru -Wait
+          if ($second.ExitCode -ne 0) { throw "second launch exited with $($second.ExitCode)" }
+          $instances = @(Get-Process taildrop-gui -ErrorAction SilentlyContinue)
+          if ($instances.Count -ne 1) { throw "expected 1 taildrop-gui, found $($instances.Count)" }
+          # The window has to exist and be findable, which is what the tray's
+          # "Open Taildrop" relies on.
+          $windows = Get-Process taildrop-gui | Where-Object { $_.MainWindowHandle -ne 0 }
+          if (-not $windows) { throw "no window was created" }
+          Stop-Process -Id $p.Id -Force
+          Write-Host "window created, tray process alive, single instance enforced"
 
       - uses: actions/upload-artifact@v4
         with:

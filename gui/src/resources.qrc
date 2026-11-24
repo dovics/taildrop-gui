@@ -3,5 +3,12 @@
         <file alias="Main.qml">Main.qml</file>
         <file alias="DeviceCard.qml">DeviceCard.qml</file>
         <file alias="TransferRow.qml">TransferRow.qml</file>
+        <file alias="icons/taildrop-16.png">icons/taildrop-16.png</file>
+        <file alias="icons/taildrop-22.png">icons/taildrop-22.png</file>
+        <file alias="icons/taildrop-32.png">icons/taildrop-32.png</file>
+        <file alias="icons/taildrop-48.png">icons/taildrop-48.png</file>
+        <file alias="icons/taildrop-64.png">icons/taildrop-64.png</file>
+        <file alias="icons/taildrop-128.png">icons/taildrop-128.png</file>
+        <file alias="icons/taildrop-256.png">icons/taildrop-256.png</file>
     </qresource>
 </RCC>

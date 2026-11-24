@@ -2,7 +2,6 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
-import Qt.labs.platform as Platform
 
 ApplicationWindow {
     id: win
@@ -36,7 +35,7 @@ ApplicationWindow {
     // receiver itself is tied to the process, not the window, so it keeps
     // running while hidden and stops when the app really exits.
     onClosing: (close) => {
-        if (!win.quitting && tray.available && tray.visible) {
+        if (!win.quitting && tray.available()) {
             close.accepted = false
             win.hide()
         }
@@ -62,53 +61,31 @@ ApplicationWindow {
 
     Shortcut { sequence: "?"; context: Qt.ApplicationShortcut; onActivated: win.helpVisible = !win.helpVisible }
     // ---- tray ---------------------------------------------------------
-    // The receiver has to outlive the window: "send me that file" should not
-    // depend on the other person happening to have a window open. The tray
-    // icon is how a closed window is found again, and it follows the same
-    // Material/Omarchy look as the window it opens.
-    Platform.SystemTrayIcon {
-        id: tray
-        // No StatusNotifier host means no icon and no way back to a hidden
-        // window, so it stays false there and closing the window quits.
-        visible: available
-        icon.name: "taildrop-gui"
-        tooltip: backend.receiving
-                 ? qsTr("Taildrop — listening")
-                 : qsTr("Taildrop — offline")
+    // The icon itself is C++ (src/tray.cpp): Qt.labs.platform's SystemTrayIcon
+    // has no Windows backend, so on Windows it would report itself unavailable
+    // and the window would close into nothing. What is left here is the part
+    // only the window knows: whether it is showing, and what to do when the
+    // tray asks for something.
+    function syncTray() {
+        tray.setWindowVisible(win.visible)
+        tray.updateState(backend.receiving, backend.peers.length)
+    }
 
-        onActivated: (reason) => {
-            if (reason === Platform.SystemTrayIcon.Trigger
-                    || reason === Platform.SystemTrayIcon.DoubleClick)
-                win.visible ? win.hide() : win.bringForward()
-        }
+    onVisibleChanged: syncTray()
 
-        menu: Platform.Menu {
-            Platform.MenuItem {
-                text: backend.receiving ? qsTr("Listening") : qsTr("Offline")
-                enabled: false
-            }
-            Platform.MenuSeparator {}
-            Platform.MenuItem {
-                text: win.visible ? qsTr("Hide window") : qsTr("Open Taildrop")
-                onTriggered: win.visible ? win.hide() : win.bringForward()
-            }
-            Platform.MenuItem {
-                text: qsTr("Rescan devices")
-                onTriggered: backend.scanPeers()
-            }
-            Platform.MenuSeparator {}
-            Platform.MenuItem {
-                text: qsTr("Quit")
-                onTriggered: win.requestQuit()
-            }
+    Connections {
+        target: tray
+        function onToggleRequested() {
+            win.visible ? win.hide() : win.bringForward()
         }
+        function onRescanRequested() { backend.scanPeers() }
+        function onQuitRequested() { win.requestQuit() }
+    }
 
-        // A background app that never speaks is indistinguishable from one that
-        // died, so an arrival announces itself when nobody is looking.
-        function announceArrival(name) {
-            if (!win.visible && tray.supportsMessages)
-                tray.showMessage(qsTr("Taildrop"), qsTr("Received %1").arg(name))
-        }
+    Connections {
+        target: backend
+        function onReceivingChanged() { win.syncTray() }
+        function onPeersChanged() { win.syncTray() }
     }
 
     // Modified keys only: bare R or Space would swallow typing and stop the
@@ -117,7 +94,7 @@ ApplicationWindow {
     // Ctrl+W is the "close the window" key people try, and on a background app
     // closing must not stop the receiver.
     Shortcut { sequence: "Ctrl+W"; context: Qt.ApplicationShortcut;
-        onActivated: tray.available && tray.visible ? win.hide() : Qt.quit() }
+        onActivated: tray.available() ? win.hide() : win.requestQuit() }
     Shortcut { sequence: "Ctrl+R"; context: Qt.ApplicationShortcut; onActivated: backend.scanPeers() }
     Shortcut { sequence: "F5"; context: Qt.ApplicationShortcut; onActivated: backend.scanPeers() }
 
@@ -417,7 +394,11 @@ ApplicationWindow {
                                 text: modelData.key
                                 color: theme.accent
                                 font.pixelSize: 12
-                                font.family: "monospace"
+                                // Windows has no "monospace" family; the
+                                // generic name resolves to a Latin-only font
+                                // there, and the box would show tofu.
+                                font.family: Qt.platform.os === "windows"
+                                             ? "Consolas" : "monospace"
                                 width: 100
                             }
                             Label {
@@ -437,8 +418,8 @@ ApplicationWindow {
             target: backend
             function onErrorOccurred(message) { toast.show(message) }
             function onReceivedArrival(fileName) {
+                // Hidden, the toast is invisible, so the tray says it instead.
                 tray.announceArrival(fileName)
-                // With the window hidden, a toast nobody can see is no use.
                 if (win.visible)
                     toast.show(qsTr("Received %1").arg(fileName))
             }
@@ -491,5 +472,6 @@ ApplicationWindow {
         // the list ever changes.
         backend.scanPeers()
         backend.startRescanCycle()
+        win.syncTray()
     }
 }

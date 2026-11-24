@@ -46,8 +46,19 @@ files. The app therefore lives in the tray:
 | `Ctrl+Q` / tray → Quit | The deliberate exit |
 | A file arrives while hidden | Desktop notification with the file name |
 
-Where there is no StatusNotifier host (no tray), there would be no way back to a
-hidden window, so closing quits instead.
+Where there is no tray at all, there would be no way back to a hidden window, so
+closing quits instead.
+
+The tray is `QSystemTrayIcon` in C++ (`gui/src/tray.cpp`), not QML's
+`Qt.labs.platform.SystemTrayIcon`. The QML one looks tidier but its platform
+backend is Linux-only: on Windows `available` stays false and the icon silently
+never appears, which is the worst failure for a background app. The C++ class is
+native on both. Windows also has no icon theme, so the artwork ships inside the
+binary (`gui/src/icons/`, generated from `gui/pkgbuild/taildrop-gui.svg`) and an
+`.ico` is compiled into the `.exe` for the taskbar.
+
+Windows startup is a Startup-folder shortcut rather than an autostart `.desktop`
+file; see `gui/pkgbuild/install-windows.ps1`.
 
 Started at login with `--background`, it listens from the first second and never
 opens a window: `Exec=taildrop-gui --background` in an XDG autostart entry, or
