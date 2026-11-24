@@ -1,0 +1,118 @@
+name: build
+
+# Builds on the real target platforms instead of cross-compiling: Qt Quick's
+# Windows deployment (windeployqt, QML import scanning) only behaves correctly
+# on Windows itself.
+on:
+  push:
+    branches: [master, main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: Windows x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          arch: win64_mingw
+          cache: true
+
+      - name: Build engine
+        run: cargo build --release --bin taildrop-cli
+
+      - name: Run Rust tests
+        run: cargo test --release
+
+      - name: Build GUI
+        shell: cmd
+        run: |
+          mkdir gui\build-win
+          cd gui\build-win
+          qmake ..\taildrop-gui.pro
+          mingw32-make -j%NUMBER_OF_PROCESSORS%
+
+      # windeployqt copies the Qt DLLs *and* scans the QML sources for the
+      # imports they use. Without the QML pass the app starts and immediately
+      # shows a blank window, so --qmldir is not optional.
+      - name: Deploy Qt runtime
+        shell: cmd
+        run: |
+          windeployqt --release --qmldir gui\src gui\build-win\taildrop-gui.exe
+          copy target\release\taildrop-cli.exe gui\build-win\taildrop-cli.exe
+          copy LICENSE gui\build-win\LICENSE.txt
+
+      - name: Assemble package
+        shell: cmd
+        run: |
+          mkdir taildrop-windows-x64
+          xcopy /E /I /Y gui\build-win taildrop-windows-x64
+          powershell -Command "Compress-Archive -Path taildrop-windows-x64 -DestinationPath taildrop-windows-x64.zip -Force"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: taildrop-windows-x64
+          path: taildrop-windows-x64.zip
+          if-no-files-found: error
+
+  linux:
+    name: Linux x64
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config cmake \
+            qt6-base-dev qt6-declarative-dev qt6-base-dev-tools \
+            libgl1-mesa-dev libxkbcommon-dev
+
+      - name: Build engine
+        run: cargo build --release --bin taildrop-cli
+
+      - name: Run Rust tests
+        run: cargo test --release
+
+      - name: Build GUI
+        run: |
+          mkdir -p gui/build-linux
+          cd gui/build-linux
+          qmake6 ../taildrop-gui.pro
+          make -j"$(nproc)"
+
+      - name: Assemble package
+        run: |
+          mkdir -p taildrop-linux-x64
+          cp gui/build-linux/taildrop-gui taildrop-linux-x64/
+          cp target/release/taildrop-cli taildrop-linux-x64/
+          cp LICENSE taildrop-linux-x64/
+          tar -czf taildrop-linux-x64.tar.gz taildrop-linux-x64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: taildrop-linux-x64
+          path: taildrop-linux-x64.tar.gz
+          if-no-files-found: error

@@ -308,20 +308,51 @@ pub async fn fetch_status() -> Result<TailnetSnapshot> {
 
 #[cfg(windows)]
 pub async fn fetch_status() -> Result<TailnetSnapshot> {
-    let out = tokio::process::Command::new("tailscale")
-        .args(["status", "--json"])
-        .output()
-        .await
-        .context("running `tailscale status --json`; is Tailscale installed and on PATH?")?;
-    if !out.status.success() {
+    // The Windows installer does not put tailscale.exe on PATH, so a bare name
+    // fails on a machine where Tailscale is perfectly healthy. Try the default
+    // install locations before giving up.
+    let candidates: [&str; 2] = [
+        "tailscale",
+        r"C:\Program Files\Tailscale\tailscale.exe",
+    ];
+    let mut last_err: Option<String> = None;
+    let mut stdout = Vec::new();
+    let mut found = false;
+
+    for exe in candidates {
+        match tokio::process::Command::new(exe)
+            .args(["status", "--json"])
+            .output()
+            .await
+        {
+            Ok(out) => {
+                if !out.status.success() {
+                    last_err = Some(format!(
+                        "`tailscale status` failed: {}",
+                        String::from_utf8_lossy(&out.stderr)
+                    ));
+                    continue;
+                }
+                stdout = out.stdout.to_vec();
+                found = true;
+                break;
+            }
+            Err(e) => {
+                last_err = Some(format!("{exe}: {e}"));
+            }
+        }
+    }
+
+    if !found {
         bail!(
-            "`tailscale status` failed: {}",
-            String::from_utf8_lossy(&out.stderr)
+            "could not run Tailscale ({}). Is it installed?",
+            last_err.unwrap_or_else(|| "tailscale not found".into())
         );
     }
+
     // The CLI may prepend a version-mismatch warning on stderr only, but guard
     // against non-JSON noise on stdout by slicing to the first brace.
-    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    let text = String::from_utf8_lossy(&stdout).to_string();
     let json = match text.find('{') {
         Some(i) => &text[i..],
         None => bail!("`tailscale status --json` printed no JSON"),

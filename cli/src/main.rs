@@ -120,7 +120,11 @@ async fn cmd_serve(
 
     let fingerprint = identity.fingerprint.clone();
     let on_received = std::sync::Arc::new(move |f: ReceivedFile| {
-        if json {
+        // This runs inside the request handler. `println!` panics when stdout is
+        // gone (the parent GUI exited and the pipe closed, EPIPE), and that panic
+        // takes down the answer to the uploader: the file lands, the sender still
+        // sees a broken connection. Write and ignore the failure instead.
+        let line = if json {
             // One object per line: the UI reads events, never scraped text.
             let event = serde_json::json!({
                 "event": "received",
@@ -132,18 +136,17 @@ async fn cmd_serve(
                 "verified": f.verified,
                 "elapsedMs": f.elapsed.as_millis() as u64,
             });
-            println!("{event}");
-            use std::io::Write;
-            let _ = std::io::stdout().flush();
+            format!("{event}\n")
         } else {
-            println!(
-                "✓ {} from {} ({}) → {}",
+            format!(
+                "✓ {} from {} ({}) → {}\n",
                 human_bytes(f.size),
                 if f.from_alias.is_empty() { "unknown" } else { &f.from_alias },
                 if f.verified { "verified" } else { "unverified" },
                 f.saved_path.display()
-            );
-        }
+            )
+        };
+        write_stdout(&line);
     });
 
     let handle = receiver::start(ServerConfig {
@@ -165,16 +168,38 @@ async fn cmd_serve(
             "port": handle.local_addr.port(),
             "addr": handle.local_addr.to_string(),
         });
-        println!("{event}");
-        use std::io::Write;
-        let _ = std::io::stdout().flush();
+        write_stdout(&format!("{event}\n"));
     } else {
         println!("  listening:   {}", handle.local_addr);
         println!();
         println!("ready — press Ctrl-C to stop");
     }
 
-    tokio::signal::ctrl_c().await.ok();
+    // Two ways to stop. Ctrl-C always; and in --json mode the parent closing
+    // our stdin, because that mode means "a UI owns my lifetime" and
+    // TerminateProcess on Windows is too abrupt to flush a file.
+    // Deliberately not applied without --json: `serve </dev/null` must keep
+    // running, or every service manager would start and instantly stop it.
+    if json {
+        let by_stdin = async {
+            use tokio::io::AsyncReadExt;
+            let mut stdin = tokio::io::stdin();
+            let mut buf = [0u8; 256];
+            loop {
+                match stdin.read(&mut buf).await {
+                    Ok(0) | Err(_) => break, // EOF or a closed pipe
+                    Ok(_) => continue,       // ignore input, wait for the close
+                }
+            }
+        };
+
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = by_stdin => {}
+        }
+    } else {
+        tokio::signal::ctrl_c().await.ok();
+    }
     handle.shutdown();
     if !json {
         println!("stopped");
@@ -183,6 +208,15 @@ async fn cmd_serve(
 }
 
 fn dirs_downloads() -> std::path::PathBuf {
+    // Windows has no $HOME, so read the shell folders from the registry's
+    // defaults first; otherwise every transfer would land in the working
+    // directory, which for a launched app is wherever it happened to start.
+    #[cfg(windows)]
+    {
+        if let Some(profile) = std::env::var_os("USERPROFILE") {
+            return std::path::PathBuf::from(profile).join("Downloads");
+        }
+    }
     if let Some(home) = std::env::var_os("HOME") {
         let home = std::path::PathBuf::from(home);
         for name in ["Downloads", "下载"] {
@@ -211,9 +245,16 @@ fn local_info(identity: &Identity) -> DeviceInfo {
 }
 
 fn hostname() -> String {
-    std::env::var("TAILDROP_ALIAS")
+    if let Some(alias) = std::env::var("TAILDROP_ALIAS").ok().filter(|s| !s.trim().is_empty()) {
+        return alias.trim().to_string();
+    }
+    // COMPUTERNAME is how Windows names itself; HOSTNAME is set by some shells
+    // on Linux but not by a plain login session.
+    if let Some(name) = std::env::var("COMPUTERNAME").ok().filter(|s| !s.trim().is_empty()) {
+        return name.trim().to_string();
+    }
+    std::env::var("HOSTNAME")
         .ok()
-        .or_else(|| std::env::var("HOSTNAME").ok())
         .or_else(|| std::fs::read_to_string("/etc/hostname").ok())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
@@ -566,6 +607,18 @@ async fn cmd_send(
             Err(e)
         }
     }
+}
+
+/// Write to stdout without panicking when the reader has gone away.
+///
+/// The receiver's callback runs on the request path, so a panic here would
+/// abort the upload response rather than just losing a log line.
+fn write_stdout(text: &str) {
+    use std::io::Write;
+    let stdout = std::io::stdout();
+    let mut lock = stdout.lock();
+    let _ = lock.write_all(text.as_bytes());
+    let _ = lock.flush();
 }
 
 fn human_bytes(n: u64) -> String {

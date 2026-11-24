@@ -21,10 +21,7 @@ Backend::~Backend() {
         m_restart->deleteLater();
         m_restart = nullptr;
     }
-    if (m_serve) {
-        m_serve->terminate();
-        m_serve->waitForFinished(1500);
-    }
+    stopServeProcess();
 }
 
 // The receiver is the point of the app, so it starts with the window instead of
@@ -65,13 +62,20 @@ QString Backend::findEngine() {
         return QString::fromUtf8(override);
 
     // Beside the GUI binary first, so a built tree works without installing.
+    // Windows appends .exe, and a missing suffix there means the engine is
+    // never found next to the app — the exact thing this lookup is for.
+    const QString suffix =
+#ifdef Q_OS_WIN
+        QStringLiteral(".exe");
+#else
+        QString();
+#endif
     const QString beside =
-        QCoreApplication::applicationDirPath() + "/taildrop-cli";
+        QCoreApplication::applicationDirPath() + "/taildrop-cli" + suffix;
     if (QFileInfo::exists(beside))
         return beside;
 
-    for (const auto &candidate : {QStringLiteral("taildrop-cli"),
-                                  QStringLiteral("taildrop-cli")}) {
+    for (const auto &candidate : {QStringLiteral("taildrop-cli")}) {
         const QString found = QStandardPaths::findExecutable(candidate);
         if (!found.isEmpty())
             return found;
@@ -141,6 +145,11 @@ void Backend::startReceiving(const QString &inbox, int port, const QString &pin)
                 scheduleReceiverRestart();
             });
 
+    // Give the engine a stdin we own and then close on quit: that is the
+    // portable "stop" signal (Windows terminate() is abrupt).
+    m_serve->setProcessChannelMode(QProcess::SeparateChannels);
+    m_serve->setReadChannel(QProcess::StandardOutput);
+
     m_serve->start();
     if (!m_serve->waitForStarted(4000)) {
         emit errorOccurred(tr("Could not start the receiver."));
@@ -201,9 +210,25 @@ void Backend::stopReceiving() {
         m_restart->deleteLater();
         m_restart = nullptr;
     }
+    stopServeProcess();
+}
+
+// Ask the engine to finish, then insist.
+//
+// Closing stdin is the polite signal it listens for in --json mode, and it lets
+// an in-flight file finish. terminate() is abrupt on Windows and can leave a
+// .part file behind, so it only happens after the polite window expires.
+void Backend::stopServeProcess() {
     if (!m_serve)
         return;
+    m_serve->closeWriteChannel();
+    if (m_serve->waitForFinished(2000))
+        return;
     m_serve->terminate();
+    if (m_serve->waitForFinished(1500))
+        return;
+    m_serve->kill();
+    m_serve->waitForFinished(1000);
 }
 
 void Backend::scanPeers() {

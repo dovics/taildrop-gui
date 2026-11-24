@@ -66,6 +66,7 @@ signals:
 private:
     void setStatus(const QString &text);
     void scheduleReceiverRestart();
+    void stopServeProcess();
     void handleServeLine(const QString &line);
     void handlePeersOutput(const QString &output);
     void watchTransfer(QProcess *process, const QVariantMap &transfer);

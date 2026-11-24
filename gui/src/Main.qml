@@ -19,6 +19,11 @@ ApplicationWindow {
 
     property bool helpVisible: false
 
+    // Closing the window must take the receiver with it: on Windows the child
+    // process has no controlling terminal, so an orphaned engine would keep
+    // port 53318 bound and the next launch would look broken.
+    onClosing: backend.stopReceiving()
+
     Shortcut { sequence: "?"; context: Qt.ApplicationShortcut; onActivated: win.helpVisible = !win.helpVisible }
     Shortcut { sequence: "Q"; context: Qt.ApplicationShortcut; onActivated: Qt.quit() }
     Shortcut { sequence: "R"; context: Qt.ApplicationShortcut; onActivated: backend.scanPeers() }
