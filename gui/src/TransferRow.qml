@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Controls.Material
+import QtQuick.Layouts
 
 // One line in the transfer list: what moved, where, and whether it worked.
 Item {
@@ -8,7 +9,11 @@ Item {
 
     implicitHeight: 56
 
-    Row {
+    // A plain Row cannot subtract for itself: the fixed widths and spacings used
+    // to add up to more than the row, which pushed the size column past the
+    // right edge and clipped the unit ("12.3 MiB" showing as "12.3 Mi").
+    // RowLayout does the arithmetic, so the name column gives up the space.
+    RowLayout {
         anchors.fill: parent
         anchors.leftMargin: 4
         anchors.rightMargin: 4
@@ -17,9 +22,9 @@ Item {
         // Direction: in or out. A glyph would be nicer but this reads at any
         // font size and never renders as tofu.
         Rectangle {
-            anchors.verticalCenter: parent.verticalCenter
-            width: 26
-            height: 26
+            Layout.alignment: Qt.AlignVCenter
+            Layout.preferredWidth: 26
+            Layout.preferredHeight: 26
             radius: Math.min(4, theme.radius)
             color: Qt.rgba(1, 1, 1, 0.06)
 
@@ -32,9 +37,9 @@ Item {
             }
         }
 
-        Column {
-            anchors.verticalCenter: parent.verticalCenter
-            width: parent.width - 26 - 12 - 110
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignVCenter
             spacing: 3
 
             Label {
@@ -42,7 +47,7 @@ Item {
                 color: theme.foreground
                 font.pixelSize: 13
                 elide: Text.ElideMiddle
-                width: parent.width
+                Layout.fillWidth: true
             }
 
             Label {
@@ -63,27 +68,28 @@ Item {
                 color: modelData.state === "failed" ? "#f7768e" : theme.muted
                 font.pixelSize: 11
                 elide: Text.ElideRight
-                width: parent.width
+                Layout.fillWidth: true
             }
         }
 
-        Item { width: 1; height: 1 }
-
-        Column {
-            anchors.verticalCenter: parent.verticalCenter
-            width: 110
+        // Width comes from the text itself rather than a guessed number of
+        // pixels, so "1023.9 MiB" is never cut off, and the column still grows
+        // with the font when the desktop is scaled up.
+        ColumnLayout {
+            Layout.alignment: Qt.AlignVCenter
             spacing: 4
 
             Label {
-                anchors.right: parent.right
                 text: row.sizeText(modelData.size || modelData.totalBytes || 0)
                 color: theme.muted
                 font.pixelSize: 11
+                Layout.alignment: Qt.AlignRight
             }
 
             Rectangle {
-                width: parent.width
-                height: 3
+                Layout.fillWidth: true
+                Layout.minimumWidth: 64
+                Layout.preferredHeight: 3
                 radius: 1.5
                 color: Qt.rgba(1, 1, 1, 0.08)
                 visible: modelData.state === "sending"
