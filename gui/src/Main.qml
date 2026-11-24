@@ -28,9 +28,11 @@ ApplicationWindow {
     onClosing: backend.stopReceiving()
 
     Shortcut { sequence: "?"; context: Qt.ApplicationShortcut; onActivated: win.helpVisible = !win.helpVisible }
-    Shortcut { sequence: "Q"; context: Qt.ApplicationShortcut; onActivated: Qt.quit() }
-    Shortcut { sequence: "R"; context: Qt.ApplicationShortcut; onActivated: backend.scanPeers() }
-    Shortcut { sequence: "Space"; context: Qt.ApplicationShortcut; onActivated: backend.scanPeers() }
+    // Modified keys only: bare R or Space would swallow typing and stop the
+    // Space key from activating a focused button.
+    Shortcut { sequence: "Ctrl+Q"; context: Qt.ApplicationShortcut; onActivated: Qt.quit() }
+    Shortcut { sequence: "Ctrl+R"; context: Qt.ApplicationShortcut; onActivated: backend.scanPeers() }
+    Shortcut { sequence: "F5"; context: Qt.ApplicationShortcut; onActivated: backend.scanPeers() }
 
     Item {
         anchors.fill: parent
@@ -290,10 +292,10 @@ ApplicationWindow {
 
                     Repeater {
                         model: [
-                            { key: "Space / R", what: qsTr("Rescan devices") },
+                            { key: "Ctrl+R / F5", what: qsTr("Rescan devices") },
                             { key: "Drag & drop", what: qsTr("Send files to a device") },
                             { key: "?", what: qsTr("This list") },
-                            { key: "Q", what: qsTr("Quit") }
+                            { key: "Ctrl+Q", what: qsTr("Quit") }
                         ]
 
                         Row {
