@@ -4,6 +4,7 @@
 #include <QtTest>
 
 #include "backend.h"
+#include "singleinstance.h"
 #include "theme.h"
 
 // Covers what the GUI layer owns: reading the theme, and turning the engine's
@@ -196,6 +197,32 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(scanCount(counter) >= 1, 8000);
         backend.stopReceiving();
         qunsetenv("TAILDROP_ENGINE");
+    }
+
+    // A second launch must reach the first instead of starting a receiver that
+    // cannot bind the port. The socket is the whole mechanism, so test it
+    // directly rather than through a window.
+    void secondLaunchReachesTheFirst()
+    {
+        const QString key = "taildrop-test-" + QString::number(QCoreApplication::applicationPid());
+        SingleInstance first(key);
+        QVERIFY(first.claim());
+
+        QSignalSpy shown(&first, &SingleInstance::showRequested);
+
+        // A later launch: it loses the claim and the running instance is asked
+        // to come forward.
+        SingleInstance second(key);
+        QVERIFY(!second.claim(true));
+        QTRY_COMPARE_WITH_TIMEOUT(shown.count(), 1, 3000);
+
+        // An autostart that finds the app already running is told the same
+        // thing, but must not pull the window in front of what the user is
+        // doing.
+        SingleInstance autostart(key);
+        QVERIFY(!autostart.claim(false));
+        QTest::qWait(300);
+        QCOMPARE(shown.count(), 1);
     }
 
     // The drop handler converts dropped URLs to paths for the Rust engine.

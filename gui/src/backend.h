@@ -82,6 +82,10 @@ signals:
     void statusTextChanged();
     void enginePathChanged();
     void errorOccurred(const QString &message);
+    // A file finished arriving. The window shows it in the list; the tray uses
+    // it for a notification when the window is hidden, since a background
+    // receiver that stays silent is indistinguishable from a dead one.
+    void receivedArrival(const QString &fileName);
 
 private:
     void setStatus(const QString &text);

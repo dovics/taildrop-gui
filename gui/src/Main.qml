@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
+import Qt.labs.platform as Platform
 
 ApplicationWindow {
     id: win
@@ -9,7 +10,10 @@ ApplicationWindow {
     height: 720
     minimumWidth: 720
     minimumHeight: 520
-    visible: true
+    // Started by the session in the background, there is nothing to show yet;
+    // bound rather than set after loading so the window never flashes open at
+    // login. Hiding it later assigns the property, which is what we want then.
+    visible: !startHiddenAtLaunch
     title: "Taildrop"
     color: theme.background
 
@@ -21,16 +25,99 @@ ApplicationWindow {
     // True while files are held over the window, so the whole window can show
     // it is a target instead of leaving the user to find the one small card.
     property bool dragActive: false
+    // A deliberate quit must not be turned into "hide", so the tray menu and
+    // Ctrl+Q set this before asking the app to exit.
+    property bool quitting: false
 
-    // Closing the window must take the receiver with it: on Windows the child
-    // process has no controlling terminal, so an orphaned engine would keep
-    // port 53318 bound and the next launch would look broken.
-    onClosing: backend.stopReceiving()
+    // Closing keeps the receiver alive in the background. A file sender has no
+    // way to know a window was closed, so quitting on close would silently stop
+    // accepting files; Ctrl+Q and the tray's Quit are the deliberate exit.
+    // Without a tray there would be no way back, so closing quits there. The
+    // receiver itself is tied to the process, not the window, so it keeps
+    // running while hidden and stops when the app really exits.
+    onClosing: (close) => {
+        if (!win.quitting && tray.available && tray.visible) {
+            close.accepted = false
+            win.hide()
+        }
+    }
+
+    function requestQuit() {
+        win.quitting = true
+        Qt.quit()
+    }
+
+    function bringForward() {
+        win.show()
+        win.raise()
+        win.requestActivate()
+    }
+
+    // A later launch (the dock icon, the launcher) asks this process to come
+    // forward instead of starting a second window that could not listen.
+    Connections {
+        target: instance
+        function onShowRequested() { win.bringForward() }
+    }
 
     Shortcut { sequence: "?"; context: Qt.ApplicationShortcut; onActivated: win.helpVisible = !win.helpVisible }
+    // ---- tray ---------------------------------------------------------
+    // The receiver has to outlive the window: "send me that file" should not
+    // depend on the other person happening to have a window open. The tray
+    // icon is how a closed window is found again, and it follows the same
+    // Material/Omarchy look as the window it opens.
+    Platform.SystemTrayIcon {
+        id: tray
+        // No StatusNotifier host means no icon and no way back to a hidden
+        // window, so it stays false there and closing the window quits.
+        visible: available
+        icon.name: "taildrop-gui"
+        tooltip: backend.receiving
+                 ? qsTr("Taildrop — listening")
+                 : qsTr("Taildrop — offline")
+
+        onActivated: (reason) => {
+            if (reason === Platform.SystemTrayIcon.Trigger
+                    || reason === Platform.SystemTrayIcon.DoubleClick)
+                win.visible ? win.hide() : win.bringForward()
+        }
+
+        menu: Platform.Menu {
+            Platform.MenuItem {
+                text: backend.receiving ? qsTr("Listening") : qsTr("Offline")
+                enabled: false
+            }
+            Platform.MenuSeparator {}
+            Platform.MenuItem {
+                text: win.visible ? qsTr("Hide window") : qsTr("Open Taildrop")
+                onTriggered: win.visible ? win.hide() : win.bringForward()
+            }
+            Platform.MenuItem {
+                text: qsTr("Rescan devices")
+                onTriggered: backend.scanPeers()
+            }
+            Platform.MenuSeparator {}
+            Platform.MenuItem {
+                text: qsTr("Quit")
+                onTriggered: win.requestQuit()
+            }
+        }
+
+        // A background app that never speaks is indistinguishable from one that
+        // died, so an arrival announces itself when nobody is looking.
+        function announceArrival(name) {
+            if (!win.visible && tray.supportsMessages)
+                tray.showMessage(qsTr("Taildrop"), qsTr("Received %1").arg(name))
+        }
+    }
+
     // Modified keys only: bare R or Space would swallow typing and stop the
     // Space key from activating a focused button.
-    Shortcut { sequence: "Ctrl+Q"; context: Qt.ApplicationShortcut; onActivated: Qt.quit() }
+    Shortcut { sequence: "Ctrl+Q"; context: Qt.ApplicationShortcut; onActivated: win.requestQuit() }
+    // Ctrl+W is the "close the window" key people try, and on a background app
+    // closing must not stop the receiver.
+    Shortcut { sequence: "Ctrl+W"; context: Qt.ApplicationShortcut;
+        onActivated: tray.available && tray.visible ? win.hide() : Qt.quit() }
     Shortcut { sequence: "Ctrl+R"; context: Qt.ApplicationShortcut; onActivated: backend.scanPeers() }
     Shortcut { sequence: "F5"; context: Qt.ApplicationShortcut; onActivated: backend.scanPeers() }
 
@@ -349,6 +436,12 @@ ApplicationWindow {
         Connections {
             target: backend
             function onErrorOccurred(message) { toast.show(message) }
+            function onReceivedArrival(fileName) {
+                tray.announceArrival(fileName)
+                // With the window hidden, a toast nobody can see is no use.
+                if (win.visible)
+                    toast.show(qsTr("Received %1").arg(fileName))
+            }
         }
 
         Rectangle {

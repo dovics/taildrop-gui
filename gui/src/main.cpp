@@ -7,10 +7,13 @@
 #include <QQuickStyle>
 #include <QUrl>
 
+#include <QCommandLineParser>
+
 #include <cstdlib>
 #include <cstring>
 
 #include "backend.h"
+#include "singleinstance.h"
 #include "theme.h"
 
 // Launching from the app launcher is not the same as launching from a shell.
@@ -81,6 +84,9 @@ int main(int argc, char *argv[]) {
 
     QGuiApplication app(argc, argv);
     app.setApplicationName("taildrop-gui");
+    // The tray and a second launch both talk to this name; changing it would
+    // silently allow two receivers that fight over the same port.
+    app.setOrganizationName("taildrop");
     app.setApplicationDisplayName("Taildrop");
     app.setApplicationVersion("0.1.0");
 
@@ -91,11 +97,38 @@ int main(int argc, char *argv[]) {
 
     QQuickStyle::setStyle("Material");
 
+    // A receiver that must survive its window is started by the session with
+    // --background: listening from the first second, no window in the way.
+    QCommandLineParser parser;
+    parser.setApplicationDescription("Send files over your tailnet.");
+    parser.addHelpOption();
+    parser.addVersionOption();
+    const QCommandLineOption background(
+        {"b", "background"},
+        "Start listening without showing the window (used at login).");
+    parser.addOption(background);
+    const QCommandLineOption show(
+        {"s", "show"}, "Bring the running window forward, then exit.");
+    parser.addOption(show);
+    parser.process(app);
+    const bool startHidden = parser.isSet(background);
+    // Launching the app again is a request to see it: the dock icon, the
+    // launcher, and `taildrop-gui --show` all mean the same thing.
+    const bool wantWindow = !startHidden || parser.isSet(show);
+
+    SingleInstance instance("taildrop-gui");
+    if (!instance.claim(wantWindow))
+        return 0;
+
     Theme theme;
     Backend backend;
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("theme", &theme);
+    engine.rootContext()->setContextProperty("instance", &instance);
+    // Read by the window before it is created, so a background start never
+    // paints a window first and hides it after.
+    engine.rootContext()->setContextProperty("startHiddenAtLaunch", startHidden);
     engine.rootContext()->setContextProperty("backend", &backend);
     engine.load(QUrl("qrc:/Main.qml"));
     if (engine.rootObjects().isEmpty()) {

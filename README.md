@@ -24,12 +24,37 @@ Prototype, verified end-to-end on a real tailnet (2026-11-24).
 | Forged upload token | 403 |
 | Name collision | second copy saved as `name (2).ext`, never overwritten |
 
-Not yet done: tray, send-to-menu, mobile, resume-on-failure, pairing/quick-save,
+Not yet done: send-to-menu, mobile, resume-on-failure, pairing/quick-save,
 history database.
 
 The GUI exists (`gui/`, Qt Quick) and is built with `./gui/bin/build`; the
-receiver starts with the window and restarts itself if it dies, so listening is
-not a button.
+receiver starts with the app and restarts itself if it dies, so listening is not
+a button.
+
+## Running in the background
+
+Closing the window hides it; it does not stop the receiver. A file sender cannot
+tell that a window is closed, so quitting on close would silently stop accepting
+files. The app therefore lives in the tray:
+
+| Action | What happens |
+|---|---|
+| Close the window / `Ctrl+W` | Window hides, receiver keeps listening |
+| Click the tray icon | Window shows (or hides, if it is up) |
+| Launch the app again | The running instance shows its window; no second process |
+| Tray → Rescan devices | Same as the window's Rescan button |
+| `Ctrl+Q` / tray → Quit | The deliberate exit |
+| A file arrives while hidden | Desktop notification with the file name |
+
+Where there is no StatusNotifier host (no tray), there would be no way back to a
+hidden window, so closing quits instead.
+
+Started at login with `--background`, it listens from the first second and never
+opens a window: `Exec=taildrop-gui --background` in an XDG autostart entry, or
+`o.launch_on_start("taildrop-gui --background")` in `~/.config/hypr/autostart.lua`
+on Omarchy. Only one instance ever runs: a second launch asks the first to come
+forward through a socket, because two receivers would fight over port 53318 and
+only one of them could accept anything.
 
 The whole window is a drop target, not just the device cards: a window that
 rejects a drag everywhere except one small rectangle teaches the user that
@@ -93,6 +118,15 @@ on:
 ```sh
 ./gui/bin/build
 TAILDROP_ENGINE=./target/release/taildrop-cli ./gui/build/taildrop-gui
+
+# login-style start: listening, no window
+TAILDROP_ENGINE=./target/release/taildrop-cli ./gui/build/taildrop-gui --background
+
+# ask the running instance to show its window
+./gui/build/taildrop-gui --show
+
+# pin it to the dock / launcher bar so it is one click away
+omarchy dock pin taildrop-gui
 ```
 
 `--to` accepts a peer hostname, its MagicDNS name, or a literal tailnet IP.

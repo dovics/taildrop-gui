@@ -344,7 +344,9 @@ void Backend::handleServeLine(const QString &line) {
         received["at"] = QDateTime::currentDateTime().toString(Qt::ISODate);
         m_transfers.prepend(received);
         emit transfersChanged();
-        setStatus(tr("Received %1").arg(received.value("fileName").toString()));
+        const QString name = received.value("fileName").toString();
+        setStatus(tr("Received %1").arg(name));
+        emit receivedArrival(name);
     }
 }
 

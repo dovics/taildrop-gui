@@ -19,3 +19,6 @@ Makefile
 # Editor / OS
 *.swp
 .DS_Store
+
+# Qt test build output
+/gui/tests/build/

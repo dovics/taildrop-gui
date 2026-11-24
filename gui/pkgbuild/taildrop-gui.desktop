@@ -1,9 +1,15 @@
 [Desktop Entry]
 Type=Application
 Name=Taildrop
-Comment=Send files over your tailnet by dropping them on a device
+Comment=Receive files over your tailnet in the background, and send by dropping
+# Plain launch: a second launch asks the running instance to show its window
+# instead of starting a receiver that cannot bind the port.
 Exec=taildrop-gui
 Icon=taildrop-gui
 Terminal=false
 Categories=Network;FileTransfer;
 StartupWMClass=taildrop-gui
+# Matches the running window, so a dock or launcher click brings it forward
+# rather than opening a second copy.
+StartupNotify=false
+SingleMainWindow=true
